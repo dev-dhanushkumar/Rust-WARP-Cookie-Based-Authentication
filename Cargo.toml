@@ -1,0 +1,20 @@
+[package]
+name = "cookie_auth"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dotenv = "0.15.0"
+serde = { version = "1.0.197", features = ["derive"] }
+tokio = { version = "1.37.0", features = ["full"] }
+sqlx = { version = "0.7.4", features = ["runtime-tokio-rustls", "macros", "postgres", "uuid", "chrono", "json"] }
+warp = "0.3.6"
+serde_json = "1.0.115"
+env_logger = "0.11.3"
+uuid = { version = "1.8.0", features = ["serde", "v4"] }
+argon2 = "0.5.3"
+chrono = { version = "0.4.35", features = ["serde"] }
+jsonwebtoken = "9.3.0"
+rand_core = { version = "0.6.4", features = ["std"] }
+time = "0.3.34"
+cookie = "0.18.1"
