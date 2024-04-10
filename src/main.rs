@@ -19,14 +19,7 @@ pub struct AppState {
     env: Config,
 }
 
-async fn checking(app_state: AppState) -> Result<impl Reply, warp::Rejection> {
-    const MESSAGE: &str = "JWT Authentication in Rust Warp, Postegres, and SqlX";
 
-    Ok(warp::reply::json(&serde_json::json!({
-        "status": "success",
-        "message": MESSAGE
-    })))
-}
 
 #[tokio::main]
 async fn main() {
