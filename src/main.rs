@@ -28,6 +28,7 @@ async fn checking(app_state: AppState) -> Result<impl Reply, warp::Rejection> {
     })))
 }
 
+
 #[tokio::main]
 async fn main() {
     if std::env::var_os("RUST_LOG").is_none() {
@@ -55,27 +56,6 @@ async fn main() {
 
     println!("🚀 Server started successfully");
 
-    // let cors = warp::cors()
-    //     .allow_origins(vec!["http://localhost:3000".parse().unwrap()])
-    //     .allow_methods(vec![
-    //         HeaderValue::from_static("GET"),
-    //         HeaderValue::from_static("POST"),
-    //     ])
-    //     .allow_headers(vec![
-    //         header::CONTENT_TYPE,
-    //         header::AUTHORIZATION,
-    //         header::ACCEPT,
-    //     ])
-    //     .allow_credentials(true);
-
-    // let routes = warp::path("api")
-    //     .and(warp::path("auth"))
-    //     .and(warp::get())
-    //     .and(with_appstate(AppState {
-    //         db: pool,
-    //         env: config,
-    //     }))
-    //     .and_then(checking);
 
     let routes = routes(pool, config);
 
