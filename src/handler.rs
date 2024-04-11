@@ -7,18 +7,28 @@ use crate::{
 // use cookie::Cookie;
 // use time::Duration as Dur;
 
+#[derive(Debug, Serialize, Clone)]
+struct ErrorResponse {
+    status: String,
+    message: String,
+}
+
+impl warp::reject::Reject for ErrorResponse {}
 
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
 use chrono::{Duration, Utc};
-use jsonwebtoken::{encode, jwk, EncodingKey, Header};
+use cookie::time::Duration as Cdur;
+use cookie::Cookie;
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
 use warp::{
-     Filter, Rejection, Reply, reply,
+     filters::header, http::HeaderMap, reply::{self, Response}, Filter, Rejection, Reply
 };
 use warp::http::header::{HeaderValue, SET_COOKIE, CONTENT_TYPE};
 //use warp::{reply, http::header::SET_COOKIE, HeaderValue};
@@ -151,11 +161,11 @@ async fn login_user_handler(
 
 // async fn logout_handler() -> Result<warp::reply::WithHeader<warp::reply::WithHeader<warp::reply::Json>>, Rejection> {
 //     // let cookie_value = "token=; Path=/; Max-Age=0; HttpOnly";
-//     let cookie = Cookie::build(("token", " "))
-//     .path("/")
-//     .max_age(Dur::new(-1, 0))  // Use http::header
-//     .http_only(true)
-//     .finish();
+//     let foo_cookie_filter = warp::cookie::<String>("token");
+//     let jwt = warp::test::request().filter(&foo_cookie_filter).await.unwrap();
+//     println!("JWT token : {:?}", jwt);
+
+//     let cookie = "token=; Path=/; Max-Age=-1; HttpOnly";
 
 //     let json_response = warp::reply::json(&json!({
 //         "status": "success"
@@ -176,9 +186,10 @@ async fn login_user_handler(
 //     Ok(response_with_json_content_type)
 // }
 
-fn logout_handler(_:jwt_auth::jwt_middleware) -> Result<impl warp::Reply, Rejection> {
-    let cookie_value = "token=; Path=/; Max-Age=-1; HttpOnly";
-
+//ATTEMP 3
+async fn logout_handler(id:Uuid) -> Result<impl Reply, warp::Rejection> {
+    println!("User id: {}", id);
+    let cookie_str = format!("token=; Max-Age=-1; httponly; path=/");
     let json_response = reply::json(&json!({
         "status": "success"
     }));
@@ -186,13 +197,105 @@ fn logout_handler(_:jwt_auth::jwt_middleware) -> Result<impl warp::Reply, Reject
     let response_with_cookie = warp::reply::with_header(
         json_response,
         SET_COOKIE,
-        HeaderValue::from_str(cookie_value).unwrap(),
+        HeaderValue::from_str(&cookie_str).unwrap(),
     );
-
-    Ok(response_with_cookie)
+    return Ok(response_with_cookie);
 }
+    
 
-async fn get_me_handler(user_id: Uuid, pool: Pool<Postgres>) -> Result<impl Reply, Rejection> {
+    // match token {
+    //     Some(token) => {
+    //         println!("{:?}", token);
+    //         let cookie_str = format!("token=; Max-Age=-1; httponly; path=/");
+    //         response.headers_mut().insert(
+    //             "Set-Cookie",
+    //             warp::http::HeaderValue::from_str(&cookie_str).unwrap(),
+    //         );
+    //         Ok(response)
+    //     }
+    //     None => {
+    //         let json_error = ErrorResponse {
+    //             status: "fail".to_string(),
+    //             message: "You are not logged in, please provide a token".to_string(),
+    //         };
+    //         let rejection = warp::reject::custom(json_error);
+    //         Err(rejection)
+    //     }
+    // }
+// }
+
+//ATTEMPT 5
+
+// async fn logout_handler(config: Config, headers: HeaderMap) -> Result<impl Reply, Rejection> {
+//     let token = extract_token_from_headers(&headers);
+
+//     match token {
+//         Some(token) => {
+//             match decode::<TokenClaims>(
+//                 &token,
+//                 &DecodingKey::from_secret(config.jwt_secret.as_ref()),
+//                 &Validation::default(),
+//             ) {
+//                 Ok(_) => {
+//                     let mut response = Response::new("Logout successful".to_string().into());
+//                     response.headers_mut().insert(
+//                         "Set-Cookie",
+//                         warp::http::HeaderValue::from_static("token=; Max-Age=-1; Path=/"),
+//                     );
+//                     Ok(response)
+//                 }
+//                 Err(_) => {
+//                     let json_error = ErrorResponse {
+//                         status: "fail".to_string(),
+//                         message: "Invalid token".to_string(),
+//                     };
+//                     Err(warp::reject::custom(json_error))
+//                 }
+//             }
+//         }
+//         None => {
+//             let json_error = ErrorResponse {
+//                 status: "fail".to_string(),
+//                 message: "Token not found in cookies".to_string(),
+//             };
+//             Err(warp::reject::custom(json_error))
+//         }
+//     }
+// }
+
+// fn extract_token_from_headers(headers: &HeaderMap) -> Option<String> {
+//     headers.get("Cookie").and_then(|cookie_header| {
+//         let header_str = cookie_header.to_str().ok()?;
+//         let token = header_str
+//             .split(';')
+//             .find(|cookie| cookie.trim().starts_with("token="))?;
+//         let token = token.split('=').nth(1)?.to_string();
+//         Some(token)
+//     })
+// }
+
+// fn logout_handler() ->Result<impl Reply, Rejection> {
+//     let cookie_value = "token=; Path=/; Max-Age=-1; HttpOnly";
+
+//     let json_response = reply::json(&json!({
+//         "status": "success"
+//     }));
+
+//     let response_with_cookie = warp::reply::with_header(
+//         json_response,
+//         SET_COOKIE,
+//         HeaderValue::from_str(cookie_value).unwrap(),
+//     );
+
+//     Ok(response_with_cookie)
+// }
+
+
+//ATTEMPT 2
+
+
+
+async fn get_me_handler(user_id:Uuid, pool: Pool<Postgres>) -> Result<impl Reply, Rejection> {
     let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
         .fetch_one(&pool)
         .await
@@ -233,18 +336,18 @@ pub fn routes(
         .and(warp::path("auth"))
         .and(warp::path("logout"))
         .and(warp::get())
-        .and(jwt_auth::jwt_middleware(config.clone(), None))
+        .and(jwt_auth::auth_validation(config.clone()))
         .and_then(logout_handler);
 
     let get_me_handler = warp::path("api")
         .and(warp::path("users"))
         .and(warp::path("me"))
         .and(warp::get())
-        .and(jwt_auth::authenticate(config.clone(),  warp::header::value("Authorization")))
+        .and(jwt_auth::auth_validation(config.clone()))
         .and(with_pool(pool.clone()))
         .and_then(get_me_handler);
 
-    register_user_handler
+     register_user_handler
         .or(login_user_handler)
         .or(logout_handler)
         .or(get_me_handler)
