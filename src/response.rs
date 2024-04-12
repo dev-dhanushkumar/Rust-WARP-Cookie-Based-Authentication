@@ -24,3 +24,9 @@ pub struct UserResponse {
     pub status: String,
     pub data: UserData,
 }
+
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub status: &'static str,
+    pub message: String,
+}

@@ -1,9 +1,11 @@
 use crate::{
     config::Config,
     jwt_auth,
-    model::{LoginUserSchema, RegisterUserSchema, TokenClaims, User},
+    model::{LoginUserSchema, RegisterUserSchema, TokenClaims, User, ForgotPasswordSchema, ResetPasswordSchema},
     response::FilteredUser,
+    email::Email
 };
+
 
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -11,14 +13,15 @@ use argon2::{
 };
 use chrono::{Duration, Utc};
 use jsonwebtoken::{encode, EncodingKey, Header};
+use serde::Serialize;
 use serde_json::json;
 use sqlx::{Pool, Postgres, Row};
 use uuid::Uuid;
 use warp::{
-     Filter, Rejection, Reply, reply,
+     reply, Filter, Rejection, Reply,
 };
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use warp::http::header::{HeaderValue, SET_COOKIE, CONTENT_TYPE};
-//use warp::{reply, http::header::SET_COOKIE, HeaderValue};
 
 fn filter_user_record(user: &User) -> FilteredUser {
     FilteredUser {
@@ -32,6 +35,14 @@ fn filter_user_record(user: &User) -> FilteredUser {
         updatedAt: user.updated_at.unwrap(),
     }
 }
+
+#[derive(Debug, Serialize, Clone)]
+struct ErrorResponse {
+    status: String,
+    message: String,
+}
+
+impl warp::reject::Reject for ErrorResponse {}
 
 
 async fn register_user_handler(
@@ -148,6 +159,8 @@ async fn login_user_handler(
 
 async fn logout_handler(id:Uuid) -> Result<impl Reply, warp::Rejection> {
     println!("User id: {}", id);
+    let current_time_utc: chrono::DateTime<Utc> = Utc::now();
+    println!("{:?}", current_time_utc);
     let cookie_str = format!("token=; Max-Age=-1; httponly; path=/");
     let json_response = reply::json(&json!({
         "status": "success"
@@ -177,6 +190,174 @@ async fn get_me_handler(user_id:Uuid, pool: Pool<Postgres>) -> Result<impl Reply
 
     Ok(warp::reply::json(&json_response))
 }
+
+
+async fn forgot_password_handler(
+    body: ForgotPasswordSchema,
+    pool: Pool<Postgres>,
+    config: Config,
+ ) -> Result<impl Reply, Rejection> {
+    let err_message = "You will receive a password reset email if user with that email exist";
+
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = $1")
+        .bind(&body.email.to_owned().to_ascii_lowercase())
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            let error_response = ErrorResponse {
+                status: "error".to_owned(),
+                message: format!("Database error: {}", e),
+            };
+            warp::reject::custom(error_response)
+        })?
+        .ok_or_else(|| {
+            let error_response = ErrorResponse {
+                status: "fail".to_owned(),
+                message: err_message.to_string(),
+            };
+            warp::reject::custom(error_response)
+        })?;
+
+    if user.verified {
+        let error_response = ErrorResponse {
+            status: "fail".to_owned(),
+            message: "Account not verified".to_string(),
+        };
+        return Err(warp::reject::custom(error_response));
+    }
+
+    let password_reset_token: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(20)
+        .map(char::from)
+        .collect();
+    let password_token_expires_in = 10; // 10 minutes
+    let password_reset_at = Utc::now() + Duration::minutes(password_token_expires_in);
+    let password_reset_url = format!(
+        "{}/resetpassword/{}",
+        config.frontend_origin.to_owned(),
+        password_reset_token
+    );
+
+    sqlx::query(
+        "UPDATE users SET password_reset_token = $1, password_reset_at = $2 WHERE email = $3",
+    )
+    .bind(&password_reset_token)
+    .bind(password_reset_at)
+    .bind(&user.email.to_ascii_lowercase())
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        let json_error = ErrorResponse {
+            status: "fail".to_owned(),
+            message: format!("Error updating user: {}", e),
+        };
+        warp::reject::custom(json_error)
+    })?;
+
+    let email_instance = Email::new(user, password_reset_url, config.clone());
+    if let Err(_) = email_instance
+        .send_password_reset_token(password_token_expires_in)
+        .await
+    {
+        let json_error = ErrorResponse {
+            status: "fail".to_owned(),
+            message: "Something bad happended while sending the password reset code".to_string(),
+        };
+        return Err(warp::reject::custom(json_error));
+    }
+
+    let response = json!({
+        "status": "success",
+        "message": err_message
+    });
+
+    Ok(warp::reply::json(&response))
+}
+
+
+
+async fn reset_password_handler(
+    pool: Pool<Postgres>,
+    password_reset_token: String,
+    body: ResetPasswordSchema,
+) -> Result<impl Reply, Rejection> {
+    if body.password != body.password_confirm {
+        let error_response = ErrorResponse {
+            status: "fail".to_owned(),
+            message: "Passwords do not match".to_string(),
+        };
+        return Err(warp::reject::custom(error_response));
+    }
+
+    // let current_time_utc: chrono::DateTime<Utc> = Utc::now();
+    let user: User = sqlx::query_as(
+        "SELECT * FROM users WHERE password_reset_token = $1 AND password_reset_at > $2",
+    )
+    .bind(&password_reset_token)
+    .bind(chrono::Utc::now())
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        let error_response = ErrorResponse {
+            status: "error".to_owned(),
+            message: format!("Database error: {}", e),
+        };
+        warp::reject::custom(error_response)
+    })?
+    .ok_or_else(|| {
+        let error_response = ErrorResponse {
+            status: "fail".to_owned(),
+            message: "The password reset token is invalid or has expired".to_string(),
+        };
+        warp::reject::custom( error_response)
+    })?;
+
+    let salt = SaltString::generate(&mut OsRng);
+    let hashed_password = Argon2::default()
+        .hash_password(body.password.as_bytes(), &salt)
+        .map_err(|e| {
+            let error_response = ErrorResponse {
+                status: "fail".to_owned(),
+                message: format!("Error while hashing password: {}", e),
+            };
+            warp::reject::custom( error_response)
+        })
+        .map(|hash| hash.to_string())?;
+
+    sqlx::query(
+        "UPDATE users SET password = $1, password_reset_token = $2, password_reset_at = NULL WHERE email = $3",
+    )
+    .bind(&hashed_password)
+    .bind(Option::<String>::None)
+    // .bind(Option::<String>::None)
+    .bind(&user.email.to_ascii_lowercase())
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        let error_response = ErrorResponse {
+            status: "fail".to_owned(),
+            message: format!("Error updating user: {}", e),
+        };
+        warp::reject::custom( error_response)
+    })?;
+
+    let cookie_str = format!("token=; Max-Age=-1; httponly; path=/");
+
+    let  json_response = reply::json(&json!({
+        "status": "success",
+        "message": "Password data updated successfully"
+    }));
+
+    let response_with_cookie = warp::reply::with_header(
+        json_response,
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie_str).unwrap(),
+    );
+
+    Ok(response_with_cookie)
+}
+
 
 
 pub fn routes(
@@ -214,13 +395,35 @@ pub fn routes(
         .and(jwt_auth::auth_validation(config.clone()))
         .and(with_pool(pool.clone()))
         .and_then(get_me_handler);
+    
+    let forgot_password_handler = warp::path("api")
+        .and(warp::path("auth"))
+        .and(warp::path("forgotpassword"))
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_pool(pool.clone()))
+        .and(with_config(config.clone()))
+        .and_then(forgot_password_handler);
 
+    let  reset_password_handler = warp::path("api")
+        .and(warp::path("auth"))
+        .and(warp::path("resetpassword"))
+        .and(warp::patch())
+        .and(with_pool(pool.clone()))
+        .and(warp::path::param::<String>())
+        .and(warp::body::json())
+        // .and_then(reset_password_handler);
+        .and_then(|pool: Pool<Postgres>, token: String, body: ResetPasswordSchema| {
+            reset_password_handler( pool,token, body)
+        });
 
 
     register_user_handler
         .or(login_user_handler)
         .or(get_me_handler)
         .or(logout_handler)
+        .or(forgot_password_handler)
+        .or(reset_password_handler)
 
 }
 
@@ -235,3 +438,9 @@ fn with_config(
 ) -> impl Filter<Extract = (Config,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || config.clone())
 }
+
+// fn with_appstate(
+//     app_state: AppState,
+// ) -> impl Filter<Extract = (AppState,), Error = std::convert::Infallible> + Clone {
+//     warp::any().map(move || app_state.clone())
+// }
