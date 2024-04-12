@@ -6,18 +6,10 @@ mod response;
 
 use config::Config;
 use dotenv::dotenv;
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
-use warp::{
-    http::header::{self, HeaderValue},
-    Filter, Reply, Rejection,
-};
+use sqlx::postgres::PgPoolOptions;
 use handler::routes;
 
-#[derive(Clone)]
-pub struct AppState {
-    db: Pool<Postgres>,
-    env: Config,
-}
+
 
 
 
@@ -48,35 +40,9 @@ async fn main() {
 
     println!("🚀 Server started successfully");
 
-    // let cors = warp::cors()
-    //     .allow_origins(vec!["http://localhost:3000".parse().unwrap()])
-    //     .allow_methods(vec![
-    //         HeaderValue::from_static("GET"),
-    //         HeaderValue::from_static("POST"),
-    //     ])
-    //     .allow_headers(vec![
-    //         header::CONTENT_TYPE,
-    //         header::AUTHORIZATION,
-    //         header::ACCEPT,
-    //     ])
-    //     .allow_credentials(true);
-
-    // let routes = warp::path("api")
-    //     .and(warp::path("auth"))
-    //     .and(warp::get())
-    //     .and(with_appstate(AppState {
-    //         db: pool,
-    //         env: config,
-    //     }))
-    //     .and_then(checking);
 
     let routes = routes(pool, config);
 
     warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
 }
 
-fn with_appstate(
-    app_state: AppState,
-) -> impl Filter<Extract = (AppState,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || app_state.clone())
-}
