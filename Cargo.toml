@@ -18,3 +18,7 @@ jsonwebtoken = "9.3.0"
 rand_core = { version = "0.6.4", features = ["std"] }
 time = "0.3.34"
 cookie = "0.18.1"
+lettre = { version = "0.11.6", features = ["tokio1", "tokio1-native-tls"] }
+rand = "0.8.5"
+handlebars = "5.1.2"
+tower-http = { version = "0.5.2", features = ["cors"] }
