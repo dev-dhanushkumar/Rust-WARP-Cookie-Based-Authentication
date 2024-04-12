@@ -15,6 +15,8 @@ pub struct User{
     pub created_at: Option<DateTime<Utc>>,
     #[serde(rename = "updatedAt")]
     pub updated_at: Option<DateTime<Utc>>,
+    pub password_reset_token: Option<String>,
+    pub password_reset_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,4 +37,16 @@ pub struct RegisterUserSchema {
 pub struct LoginUserSchema {
     pub email: String,
     pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ForgotPasswordSchema {
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetPasswordSchema {
+    pub password: String,
+    #[serde(rename = "passwordConfirm")]
+    pub password_confirm: String,
 }
